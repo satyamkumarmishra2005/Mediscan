@@ -26,7 +26,14 @@ public class MedicineController {
         return ResponseEntity.ok(medicine);
     }
 
-
+    @PostMapping("/identify/manual")
+    public ResponseEntity<Medicine> identifyMedicineManual(@RequestParam("name") String name) {
+        if (name == null || name.trim().isEmpty()) {
+            return ResponseEntity.badRequest().build();
+        }
+        Medicine medicine = medicineService.identifyMedicineManual(name.trim());
+        return ResponseEntity.ok(medicine);
+    }
     @GetMapping("/{id}")
     public ResponseEntity<Medicine> getMedicineById(@PathVariable UUID id) {
         Medicine medicine = medicineService.getMedicineById(id);

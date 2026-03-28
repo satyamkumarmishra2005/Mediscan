@@ -73,6 +73,21 @@
 			<artifactId>jackson-databind</artifactId>
 		</dependency>
 
+		<!-- Rate Limiting (Bucket4j - Token Bucket Algorithm) -->
+		<dependency>
+			<groupId>com.bucket4j</groupId>
+			<artifactId>bucket4j-core</artifactId>
+			<version>8.10.1</version>
+		</dependency>
+
+
+		<dependency>
+			<groupId>org.jsoup</groupId>
+			<artifactId>jsoup</artifactId>
+			<version>1.17.2</version>
+		</dependency>
+
+
 
 
 

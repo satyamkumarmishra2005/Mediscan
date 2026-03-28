@@ -41,6 +41,31 @@ public class GeminiService {
             Example format:
             {"brandName":"Crocin","genericName":"Paracetamol","saltComposition":"Paracetamol 500mg","manufacturer":"GSK","dosage":"500mg Tablet"}
             """.formatted(ocrText);
+        
+        return callGeminiApi(prompt);
+    }
+
+    public MedicineDetailsDto enrichMedicineFromName(String medicineName) {
+        String prompt = """
+            You are a pharmaceutical expert. The user provided the name of a medicine: "%s".
+            Provide the standard details for this medicine based on your medical knowledge.
+            
+            Extract/Identify:
+            - brandName: The brand/trade name of the medicine (use the provided name or correct its spelling)
+            - genericName: The generic/scientific name
+            - saltComposition: The active ingredient(s) and their amounts
+            - manufacturer: The manufacturing company
+            - dosage: The typical dosage form and strength
+            
+            IMPORTANT: Respond ONLY with a valid JSON object. No markdown, no explanation, just pure JSON.
+            Example format:
+            {"brandName":"Crocin","genericName":"Paracetamol","saltComposition":"Paracetamol 500mg","manufacturer":"GSK","dosage":"500mg Tablet"}
+            """.formatted(medicineName);
+
+        return callGeminiApi(prompt);
+    }
+
+    private MedicineDetailsDto callGeminiApi(String prompt) {
         try {
             GeminiRequest request = GeminiRequest.builder()
                     .contents(List.of(
@@ -69,9 +94,11 @@ public class GeminiService {
             jsonText = jsonText.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
             return objectMapper.readValue(jsonText, MedicineDetailsDto.class);
         } catch (ApiException e) {
+            System.err.println("API Exception in Gemini: " + e.getMessage());
             throw e;
         } catch (Exception e) {
-            throw new ApiException("Failed to parse medicine details via Gemini", e);
+            e.printStackTrace();
+            throw new ApiException("Failed to parse medicine details via Gemini: " + e.getMessage(), e);
         }
     }
 }
