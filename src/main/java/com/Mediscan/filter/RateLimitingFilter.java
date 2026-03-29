@@ -30,9 +30,13 @@ public class RateLimitingFilter extends OncePerRequestFilter {
     @Value("${rate.limit.identify.requests-per-minute:5}")
     private int identifyRateLimit;
 
+    @Value("${rate.limit.generics.requests-per-minute:15}")
+    private int genericsRateLimit;
+
     // One bucket per client IP address
     private final Map<String, Bucket> priceBuckets = new ConcurrentHashMap<>();
     private final Map<String, Bucket> identifyBuckets = new ConcurrentHashMap<>();
+    private final Map<String, Bucket> genericsBuckets = new ConcurrentHashMap<>();
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -61,7 +65,18 @@ public class RateLimitingFilter extends OncePerRequestFilter {
                 sendRateLimitResponse(response);
                 return;
             }
+        } else if (path.startsWith("/api/v1/generics")) {
+            Bucket bucket = genericsBuckets.computeIfAbsent(clientIp,
+                    k -> createBucket(genericsRateLimit));
+
+            if (!bucket.tryConsume(1)) {
+                log.warn("Rate limit exceeded for IP {} on generics endpoint", clientIp);
+                sendRateLimitResponse(response);
+                return;
+            }
         }
+
+        
 
         // Request is allowed — continue to controller
         filterChain.doFilter(request, response);

@@ -17,15 +17,27 @@ public class RedisConfig {
 
     @Bean
     public RedisCacheManager cacheManager(RedisConnectionFactory connectionFactory){
-        RedisCacheConfiguration config = RedisCacheConfiguration.defaultCacheConfig()
+        RedisCacheConfiguration pricesCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
                 .entryTtl(Duration.ofHours(6))
                 .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
                         GenericJacksonJsonRedisSerializer.create(builder -> {
                         })))
                 .disableCachingNullValues();
 
+
+        // Generics cache: 24 hour TTL (alternatives change rarely)
+        RedisCacheConfiguration genericsCacheConfig = RedisCacheConfiguration.defaultCacheConfig()
+                .entryTtl(Duration.ofHours(24))
+
+                .serializeValuesWith(RedisSerializationContext.SerializationPair.fromSerializer(
+                GenericJacksonJsonRedisSerializer.create(builder -> {
+                })))
+                .disableCachingNullValues();
+
+
         return RedisCacheManager.builder(connectionFactory)
-                .cacheDefaults(config)
+                .withCacheConfiguration("medicinePrices", pricesCacheConfig)
+                .withCacheConfiguration("genericAlternatives", genericsCacheConfig)
                 .build();
 
     }
