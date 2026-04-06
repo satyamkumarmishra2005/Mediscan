@@ -14,7 +14,7 @@ import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/v1/generics")
-@CrossOrigin("*")
+@CrossOrigin(origins = {"https://mediscan-pi.vercel.app", "http://localhost:5173", "http://localhost:3000"})
 public class GenericAlternativeController {
 
     private final GenericAlternativeService genericAlternativeService;

@@ -19,4 +19,7 @@ public class PriceResponseDto implements Serializable {
     private String productUrl;
     private String productName;
     private Integer stripSize;
+    /** true = price is a real scraped value; false = search redirect only */
+    @Builder.Default
+    private boolean priceAvailable = true;
 }

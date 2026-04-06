@@ -12,7 +12,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/medicine")
-@CrossOrigin(origins = "*") // Allow frontend to call this API
+@CrossOrigin(origins = {"https://mediscan-pi.vercel.app", "http://localhost:5173", "http://localhost:3000"}) // Allow frontend to call this API
 public class MedicineController {
 
     private final MedicineService medicineService;

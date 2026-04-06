@@ -12,7 +12,7 @@ import java.util.UUID;
 
 @RestController
 @RequestMapping("/api/v1/prices")
-@CrossOrigin(origins = "*")
+@CrossOrigin(origins = {"https://mediscan-pi.vercel.app", "http://localhost:5173", "http://localhost:3000"})
 public class PriceController {
 
     private final PriceService priceService;

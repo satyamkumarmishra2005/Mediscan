@@ -7,6 +7,7 @@ import com.Mediscan.model.MedicinePrice;
 import com.Mediscan.repository.MedicinePriceRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.cache.annotation.CacheEvict;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.stereotype.Service;
 
@@ -21,6 +22,7 @@ public class PriceService {
     private final PriceScraperService priceScraperService;
     private final MedicineService medicineService;
     private final MedicinePriceRepository medicinePriceRepository;
+
     public PriceService(PriceScraperService priceScraperService,
                         MedicineService medicineService,
                         MedicinePriceRepository medicinePriceRepository) {
@@ -30,18 +32,16 @@ public class PriceService {
     }
 
     @Cacheable(value = "medicinePrices", key = "#medicineId.toString()", unless = "#result.isEmpty()")
-    public List<PriceResponseDto> getPricesForMedicine(UUID medicineId){
-        // Step 1: Get the medicine from DB (throws 404 if not found)
-
+    public List<PriceResponseDto> getPricesForMedicine(UUID medicineId) {
         Medicine medicine = medicineService.getMedicineById(medicineId);
 
         log.info("Cache MISS for medicine '{}' — scraping prices...", medicine.getBrandName());
 
-        // Step2: Scrape prices from all platforms
-
         List<PriceResponseDto> scrapedPrices = priceScraperService.scrapeAllPlatforms(medicine.getBrandName());
 
-        // Step 3: Save scraped prices to DB (optional, for caching)
+        // Delete old stale prices for this medicine before saving fresh ones
+        medicinePriceRepository.deleteByMedicineId(medicineId);
+
         for (PriceResponseDto dto : scrapedPrices) {
             MedicinePrice priceEntity = MedicinePrice.builder()
                     .medicine(medicine)
@@ -55,5 +55,21 @@ public class PriceService {
 
         log.info("Scraped and saved {} prices for '{}'", scrapedPrices.size(), medicine.getBrandName());
         return scrapedPrices;
+    }
+
+    /**
+     * Force-evicts the Redis cache for a specific medicine so next call re-scrapes fresh data.
+     */
+    @CacheEvict(value = "medicinePrices", key = "#medicineId.toString()")
+    public void evictCacheForMedicine(UUID medicineId) {
+        log.info("Cache evicted for medicine ID: {}", medicineId);
+    }
+
+    /**
+     * Evicts ALL cached prices — useful after scraper fixes are deployed.
+     */
+    @CacheEvict(value = "medicinePrices", allEntries = true)
+    public void evictAllPriceCache() {
+        log.info("All medicinePrices cache entries evicted.");
     }
 }

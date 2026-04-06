@@ -21,8 +21,9 @@ public class PriceScraperService {
 
     private static final Logger log = LoggerFactory.getLogger(PriceScraperService.class);
 
-    private static final String USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
-            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36";
+    private static final String USER_AGENT =
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) " +
+            "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
     private final RestTemplate restTemplate;
     private final ObjectMapper objectMapper;
@@ -33,312 +34,201 @@ public class PriceScraperService {
     }
 
     // ──────────────────────────────────────────────
-    //  PLATFORM 1: 1mg (Internal Search API)
+    //  PLATFORM 1 : Tata 1mg  (real prices via API)
     // ──────────────────────────────────────────────
 
     public List<PriceResponseDto> scrapeFromOneMg(String medicineName) {
         List<PriceResponseDto> results = new ArrayList<>();
         try {
-            String encodedName = URLEncoder.encode(medicineName, StandardCharsets.UTF_8);
-            String apiUrl = "https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q="
-                    + encodedName + "&city=New%20Delhi&per_page=5&types=sku,allopathy";
+            String enc = URLEncoder.encode(medicineName, StandardCharsets.UTF_8);
+            String url = "https://www.1mg.com/pwa-dweb-api/api/v4/search/all?q="
+                    + enc + "&city=New%20Delhi&per_page=5&types=sku,allopathy";
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", USER_AGENT);
-            headers.set("Accept", "application/json");
-            headers.set("Referer", "https://www.1mg.com/");
-            headers.set("x-city", "New Delhi");
+            HttpHeaders h = new HttpHeaders();
+            h.set("User-Agent", USER_AGENT);
+            h.set("Accept", "application/json");
+            h.set("Referer", "https://www.1mg.com/");
+            h.set("x-city", "New Delhi");
 
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    URI.create(apiUrl), HttpMethod.GET, entity, String.class);
+            JsonNode root = objectMapper.readTree(
+                    restTemplate.exchange(URI.create(url), HttpMethod.GET, new HttpEntity<>(h), String.class)
+                                .getBody());
 
-            JsonNode root = objectMapper.readTree(response.getBody());
+            JsonNode items = root.path("data").path("search_results");
+            if (items.isArray()) {
+                for (JsonNode item : items) {
+                    // Skip unavailable / discontinued items
+                    if (!item.path("available").asBoolean(true)) continue;
 
-            // 1mg API returns: { data: { search_results: [ { name, prices: { mrp, ... }, slug } ] } }
-            JsonNode searchResults = root.path("data").path("search_results");
-            if (searchResults.isMissingNode()) {
-                // Fallback: try alternate path
-                searchResults = root.path("data").path("skus");
-            }
+                    String name    = item.path("name").asText("");
+                    // Prices come as strings "₹18.9" — strip currency symbol
+                    String discStr = item.path("prices").path("discounted_price").asText("");
+                    String mrpStr  = item.path("prices").path("mrp").asText("");
+                    double price   = parsePrice(discStr.isEmpty() ? mrpStr : discStr);
 
-            if (searchResults.isArray()) {
-                for (JsonNode item : searchResults) {
-                    try {
-                        String name = item.path("name").asText("");
-                        double price = item.path("prices").path("mrp").asDouble(0);
-                        if (price == 0) {
-                            price = item.path("prices").path("discounted_price").asDouble(0);
-                        }
-                        if (price == 0) {
-                            price = item.path("price").asDouble(0);
-                        }
-                        String slug = item.path("slug").asText("");
-                        String productUrl = slug.isEmpty() ? "" : "https://www.1mg.com/" + slug;
+                    // "url" e.g. "/drugs/crocin-advance-500mg-tablet-600468"
+                    String urlPath = item.path("url").asText("");
+                    String productUrl = urlPath.isEmpty()
+                            ? "https://www.1mg.com/search/all?name=" + enc
+                            : "https://www.1mg.com" + urlPath;
 
-                        if (!name.isEmpty() && price > 0) {
-                            results.add(PriceResponseDto.builder()
-                                    .platform("1mg")
-                                    .productName(name)
-                                    .price(BigDecimal.valueOf(price))
-                                    .productUrl(productUrl)
-                                    .build());
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to parse 1mg item: {}", e.getMessage());
+                    if (!name.isEmpty() && price > 0) {
+                        results.add(PriceResponseDto.builder()
+                                .platform("1mg")
+                                .productName(name)
+                                .price(BigDecimal.valueOf(price))
+                                .productUrl(productUrl)
+                                .priceAvailable(true)
+                                .build());
                     }
                     if (results.size() >= 5) break;
                 }
             }
         } catch (Exception e) {
-            log.error("Failed to fetch 1mg API for '{}': {}", medicineName, e.getMessage());
+            log.error("1mg scrape failed for '{}': {}", medicineName, e.getMessage());
         }
+        log.info("1mg → {} results for '{}'", results.size(), medicineName);
         return results;
     }
 
     // ──────────────────────────────────────────────
-    //  PLATFORM 2: PharmEasy (TypeAhead Search API)
+    //  PLATFORM 2 : PharmEasy  (slug from typeahead; no prices in API)
     // ──────────────────────────────────────────────
 
     public List<PriceResponseDto> scrapeFromPharmEasy(String medicineName) {
         List<PriceResponseDto> results = new ArrayList<>();
+        String enc = URLEncoder.encode(medicineName, StandardCharsets.UTF_8);
+
         try {
-            String encodedName = URLEncoder.encode(medicineName, StandardCharsets.UTF_8);
-            String apiUrl = "https://pharmeasy.in/api/search/searchTypeAhead?q=" + encodedName;
+            String url = "https://pharmeasy.in/api/search/searchTypeAhead?q=" + enc;
 
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", USER_AGENT);
-            headers.set("Accept", "application/json");
-            headers.set("Referer", "https://pharmeasy.in/");
+            HttpHeaders h = new HttpHeaders();
+            h.set("User-Agent", USER_AGENT);
+            h.set("Accept", "application/json");
+            h.set("Referer", "https://pharmeasy.in/");
 
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    URI.create(apiUrl), HttpMethod.GET, entity, String.class);
+            JsonNode root = objectMapper.readTree(
+                    restTemplate.exchange(URI.create(url), HttpMethod.GET, new HttpEntity<>(h), String.class)
+                                .getBody());
 
-            JsonNode root = objectMapper.readTree(response.getBody());
-
-            // PharmEasy API returns: { data: { products: [ { name, mrp, slug } ] } }
             JsonNode products = root.path("data").path("products");
-            if (products.isMissingNode() || !products.isArray()) {
-                products = root.path("data").path("suggestions");
-            }
-
             if (products.isArray()) {
                 for (JsonNode item : products) {
-                    try {
-                        String name = item.path("name").asText("");
-                        if (name.isEmpty()) {
-                            name = item.path("productName").asText("");
-                        }
-                        double price = item.path("mrp").asDouble(0);
-                        if (price == 0) {
-                            price = item.path("price").asDouble(0);
-                        }
-                        if (price == 0) {
-                            price = item.path("salePrice").asDouble(0);
-                        }
-                        String slug = item.path("slug").asText("");
-                        String productUrl = slug.isEmpty() ? ""
-                                : "https://pharmeasy.in/online-medicine-order/" + slug;
+                    // entityType == 2 → real product (not generic search term)
+                    if (item.path("entityType").asInt(0) != 2) continue;
 
-                        if (!name.isEmpty() && price > 0) {
-                            results.add(PriceResponseDto.builder()
-                                    .platform("PharmEasy")
-                                    .productName(name)
-                                    .price(BigDecimal.valueOf(price))
-                                    .productUrl(productUrl)
-                                    .build());
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to parse PharmEasy item: {}", e.getMessage());
-                    }
-                    if (results.size() >= 5) break;
+                    String name = item.path("name").asText("");
+                    if (name.isEmpty()) continue;
+
+                    String slug = item.path("slug").asText("");
+                    if (slug.isEmpty() || slug.contains("%20")) continue;
+
+                    // PharmEasy typeahead gives no price; mark as redirect-only
+                    String productUrl = "https://pharmeasy.in/online-medicine-order/" + slug;
+
+                    results.add(PriceResponseDto.builder()
+                            .platform("PharmEasy")
+                            .productName(name)
+                            .price(null)
+                            .productUrl(productUrl)
+                            .priceAvailable(false)
+                            .build());
+
+                    if (results.size() >= 3) break;
                 }
             }
         } catch (Exception e) {
-            log.error("Failed to fetch PharmEasy API for '{}': {}", medicineName, e.getMessage());
+            log.error("PharmEasy scrape failed for '{}': {}", medicineName, e.getMessage());
         }
+
+        // Always guarantee at least 1 PharmEasy entry (search-page fallback)
+        if (results.isEmpty()) {
+            results.add(PriceResponseDto.builder()
+                    .platform("PharmEasy")
+                    .productName(medicineName)
+                    .price(null)
+                    .productUrl("https://pharmeasy.in/search/result?q=" + enc)
+                    .priceAvailable(false)
+                    .build());
+        }
+
+        log.info("PharmEasy → {} results for '{}'", results.size(), medicineName);
         return results;
     }
 
     // ──────────────────────────────────────────────
-    //  PLATFORM 3: Netmeds (Catalog Search API)
+    //  PLATFORM 3 : Apollo Pharmacy  (search-redirect)
+    //  Working URL: /search-medicines/{name}
     // ──────────────────────────────────────────────
 
-    public List<PriceResponseDto> scrapeFromNetmeds(String medicineName) {
-        List<PriceResponseDto> results = new ArrayList<>();
-        try {
-            String encodedName = URLEncoder.encode(medicineName, StandardCharsets.UTF_8);
-            String apiUrl = "https://www.netmeds.com/ext/search/application/api/v1.0/products?q="
-                    + encodedName + "&page_size=5";
-
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", USER_AGENT);
-            headers.set("Accept", "application/json, text/plain, */*");
-            headers.set("Referer", "https://www.netmeds.com/");
-            headers.set("Origin", "https://www.netmeds.com");
-
-            HttpEntity<String> entity = new HttpEntity<>(headers);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    URI.create(apiUrl), HttpMethod.GET, entity, String.class);
-
-            JsonNode root = objectMapper.readTree(response.getBody());
-
-            // Netmeds API returns: { payLoad: { productList: [ { productName, mrp, ... } ] } }
-            // OR: { items: [ { attributes: { "mstar-displaynamewops": name, "mstar-sellingprice": price } } ] }
-            JsonNode productList = root.path("payLoad").path("productList");
-            if (productList.isMissingNode() || !productList.isArray()) {
-                productList = root.path("items");
-            }
-
-            if (productList.isArray()) {
-                for (JsonNode item : productList) {
-                    try {
-                        String name = item.path("productName").asText("");
-                        if (name.isEmpty()) {
-                            name = item.path("attributes").path("mstar-displaynamewops").asText("");
-                        }
-                        if (name.isEmpty()) {
-                            name = item.path("name").asText("");
-                        }
-
-                        double price = item.path("finalPrice").asDouble(0);
-                        if (price == 0) {
-                            price = item.path("mrp").asDouble(0);
-                        }
-                        if (price == 0) {
-                            price = item.path("attributes").path("mstar-sellingprice").asDouble(0);
-                        }
-
-                        String slug = item.path("productUrl").asText("");
-                        if (slug.isEmpty()) {
-                            slug = item.path("slug").asText("");
-                        }
-                        String productUrl = slug.isEmpty() ? ""
-                                : (slug.startsWith("http") ? slug : "https://www.netmeds.com" + slug);
-
-                        if (!name.isEmpty() && price > 0) {
-                            results.add(PriceResponseDto.builder()
-                                    .platform("Netmeds")
-                                    .productName(name)
-                                    .price(BigDecimal.valueOf(price))
-                                    .productUrl(productUrl)
-                                    .build());
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to parse Netmeds item: {}", e.getMessage());
-                    }
-                    if (results.size() >= 5) break;
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to fetch Netmeds API for '{}': {}", medicineName, e.getMessage());
-        }
-        return results;
+    public List<PriceResponseDto> buildApolloEntry(String medicineName) {
+        // Apollo uses a clean URL slug format: /search-medicines/crocin+advance
+        String enc = URLEncoder.encode(medicineName, StandardCharsets.UTF_8)
+                               .replace("%20", "+");   // spaces as + not %20
+        return List.of(PriceResponseDto.builder()
+                .platform("Apollo Pharmacy")
+                .productName(medicineName)
+                .price(null)
+                .productUrl("https://www.apollopharmacy.in/search-medicines/" + enc)
+                .priceAvailable(false)
+                .build());
     }
 
     // ──────────────────────────────────────────────
-    //  PLATFORM 4: Apollo Pharmacy (Full Search API)
+    //  PLATFORM 4 : MedPlus  (search-redirect)
+    //  Working URL: /medicines/search/{name}
     // ──────────────────────────────────────────────
 
-    public List<PriceResponseDto> scrapeFromApollo(String medicineName) {
-        List<PriceResponseDto> results = new ArrayList<>();
-        try {
-            String apiUrl = "https://search.apollo247.com/v4/fullSearch";
-
-            // Apollo uses a POST request with JSON body
-            HttpHeaders headers = new HttpHeaders();
-            headers.set("User-Agent", USER_AGENT);
-            headers.setContentType(MediaType.APPLICATION_JSON);
-            headers.set("Accept", "application/json");
-            headers.set("Referer", "https://www.apollopharmacy.in/");
-            headers.set("Origin", "https://www.apollopharmacy.in");
-
-            // Build the search request body
-            String requestBody = """
-                {
-                    "query": "%s",
-                    "page": 1,
-                    "productsPerPage": 5,
-                    "selSortBy": "relevance",
-                    "filters": [],
-                    "pincode": ""
-                }
-                """.formatted(medicineName.replace("\"", "\\\""));
-
-            HttpEntity<String> entity = new HttpEntity<>(requestBody, headers);
-            ResponseEntity<String> response = restTemplate.exchange(
-                    URI.create(apiUrl), HttpMethod.POST, entity, String.class);
-
-            JsonNode root = objectMapper.readTree(response.getBody());
-
-            // Apollo API returns: { data: { productDetails: { products: [ { name, price, specialPrice, urlKey } ] } } }
-            JsonNode products = root.path("data").path("productDetails").path("products");
-            if (products.isMissingNode() || !products.isArray()) {
-                products = root.path("data").path("products");
-            }
-
-            if (products.isArray()) {
-                for (JsonNode item : products) {
-                    try {
-                        String name = item.path("name").asText("");
-                        double price = item.path("specialPrice").asDouble(0);
-                        if (price == 0) {
-                            price = item.path("price").asDouble(0);
-                        }
-                        String urlKey = item.path("urlKey").asText("");
-                        String productUrl = urlKey.isEmpty() ? ""
-                                : "https://www.apollopharmacy.in/otc/" + urlKey;
-
-                        if (!name.isEmpty() && price > 0) {
-                            results.add(PriceResponseDto.builder()
-                                    .platform("Apollo Pharmacy")
-                                    .productName(name)
-                                    .price(BigDecimal.valueOf(price))
-                                    .productUrl(productUrl)
-                                    .build());
-                        }
-                    } catch (Exception e) {
-                        log.warn("Failed to parse Apollo item: {}", e.getMessage());
-                    }
-                    if (results.size() >= 5) break;
-                }
-            }
-        } catch (Exception e) {
-            log.error("Failed to fetch Apollo API for '{}': {}", medicineName, e.getMessage());
-        }
-        return results;
+    public List<PriceResponseDto> buildMedPlusEntry(String medicineName) {
+        // MedPlus uses Base64 encoded 'A::' + searchterm for its newly updated search URL structure
+        String rawQuery = "A::" + medicineName.toLowerCase();
+        String b64slug = java.util.Base64.getEncoder().encodeToString(rawQuery.getBytes(StandardCharsets.UTF_8));
+        
+        return List.of(PriceResponseDto.builder()
+                .platform("MedPlus")
+                .productName(medicineName)
+                .price(null)
+                .productUrl("https://www.medplusmart.com/searchAll/" + b64slug)
+                .priceAvailable(false)
+                .build());
     }
 
     // ──────────────────────────────────────────────
-    //  AGGREGATE: All 4 platforms (with polite delays)
+    //  AGGREGATE
     // ──────────────────────────────────────────────
 
     public List<PriceResponseDto> scrapeAllPlatforms(String medicineName) {
-        List<PriceResponseDto> allResults = new ArrayList<>();
+        List<PriceResponseDto> all = new ArrayList<>();
 
-        allResults.addAll(scrapeFromOneMg(medicineName));
+        all.addAll(scrapeFromOneMg(medicineName));
         politeSleep();
 
-        allResults.addAll(scrapeFromPharmEasy(medicineName));
+        all.addAll(scrapeFromPharmEasy(medicineName));
         politeSleep();
 
-        allResults.addAll(scrapeFromNetmeds(medicineName));
-        politeSleep();
+        // Apollo and MedPlus: always present (search redirect)
+        all.addAll(buildApolloEntry(medicineName));
+        all.addAll(buildMedPlusEntry(medicineName));
 
-        allResults.addAll(scrapeFromApollo(medicineName));
-
-        return allResults;
+        log.info("Total {} platform entries for '{}'", all.size(), medicineName);
+        return all;
     }
 
     private void politeSleep() {
+        try { Thread.sleep(600); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+    }
+
+    /** Strip currency symbols like ₹, Rs., etc. and parse as double. */
+    private double parsePrice(String raw) {
+        if (raw == null || raw.isBlank()) return 0.0;
         try {
-            Thread.sleep(1500);
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            String cleaned = raw.replaceAll("[^0-9.]", "");
+            int dot = cleaned.indexOf('.');
+            if (dot >= 0)
+                cleaned = cleaned.substring(0, dot + 1) + cleaned.substring(dot + 1).replace(".", "");
+            return cleaned.isEmpty() ? 0.0 : Double.parseDouble(cleaned);
+        } catch (NumberFormatException e) {
+            return 0.0;
         }
     }
 }
-
-
-

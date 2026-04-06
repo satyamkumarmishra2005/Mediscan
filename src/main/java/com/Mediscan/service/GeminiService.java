@@ -92,7 +92,7 @@ public class GeminiService {
                 throw new ApiException("Empty response from Gemini API");
             }
             String jsonText = geminiResponse.getCandidates().get(0)
-                    .getContent().getParts().getFirst().getText();
+                    .getContent().getParts().get(0).getText();
             // Clean up response — Gemini sometimes wraps JSON in markdown code blocks
             jsonText = jsonText.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
             return objectMapper.readValue(jsonText, MedicineDetailsDto.class);
@@ -165,7 +165,7 @@ public class GeminiService {
             throw new ApiException("Empty response from Gemini API");
         }
         String jsonText = geminiResponse.getCandidates().get(0)
-                .getContent().getParts().getFirst().getText();
+                .getContent().getParts().get(0).getText();
         // Clean up — Gemini sometimes wraps in markdown code blocks
         jsonText = jsonText.replaceAll("```json\\s*", "").replaceAll("```\\s*", "").trim();
         return jsonText;
